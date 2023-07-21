@@ -1,0 +1,383 @@
+---
+title: "Illinois Appraisal Equity Analysis: Map and Regressions"
+author: "Jada Potter"
+date: 'July 21, 2023'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<style>
+  .bordered {
+    padding: 20px;
+    border: 1px solid #0b5394;
+    border-radius: 8px;
+  }
+</style>
+
+---
+
+## Map: Race, Income, and Appraisal Value in Illinois
+
+An appraisal is the process by which a lender determines the value of a home. Bias often enters this process when appraisers undervalue homes due to the race of the current homeowner or their neighbors, preventing homebuyers from receiving loans large enough to cover the contract price of a house.
+
+In this analysis, appraisal equity in Illinois is evaluated through the use of several key variables from the Federal Housing Finance Agency (FHFA) Uniform Appraisal Dataset (UAD), such as:
+
+-   The percentage of appraisal values that are below the contract price in each tract (an unfavorable outcome for a consumer).
+-   The percentage of appraisal values that are above the contract price in each tract (a favorable outcome for a consumer). This allows us not only to show who is losing out, but who is benefiting from inequities in the appraisal process.
+-   The count of home purchase appraisals per year (averaged) in each tract.
+
+Demographic data from the US Census Bureau are also included for comparison.
+
+Please note that FHFA data were suppressed for about 23% of census tracts due to privacy concerns, and thus these tracts are not included in this analysis.
+
+::: bordered
+<details>
+
+<summary style="color:#0b5394;font-weight:bold">Click here to show the process used to produce the map below in R</summary>
+
+### Loading packages
+
+The following packages must be loaded in order for this script to run:
+
+```{r 0, results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(tmap)
+library(leaflet)
+library(plotly)
+library(GGally)
+library(kableExtra)
+```
+
+### Extracting data
+
+#### Federal Housing Finance Agency (FHFA) Uniform Appraisal Dataset (UAD)
+
+Data from the UAD are downloaded from the [**FHFA datasets page**](https://www.fhfa.gov/DataTools/Pages/UAD-Dashboards.aspx). Tract-level data are used to show differences in appraisal values between local areas.
+
+After data are downloaded, the following operations are done to reduce the size and increase the relevance of the dataset:
+
+1.  Only tracts in Illinois, the study area, are included.
+2.  Only data from 2018 onward are included (to allow for averaging later).
+3.  Only data on home purchases (rather than refinancing) are included.
+4.  Unnecessary variables are dropped.
+5.  A 5-year average, from 2018 to 2022 (inclusive), is taken to show the most recent appraisal data, while also ensuring that a long enough period is used to reduce noise.
+
+Note that the following code chunk is not run in this R Markdown (hence the `#` before each line) in order to save time, as the output file only must be created once.
+
+```{r 1}
+## Load data, filter data, and drop unnecessary variables -- COMMENTED, AS THIS ONLY NEEDS TO BE RUN ONCE
+#rawdata = read.csv("FHFA_UAD_tract/FHFA_UAD_tract.csv") %>%
+#  filter(STATEPOSTAL == "IL" & YEAR >= 2018 & PURPOSE == "Purchase") %>%
+#  select(SERIES, GEOID = TRACT, YEAR, VALUE)
+
+## Rename series
+#varnms = data.frame(SERIES = unique(rawdata$SERIES), varnm = paste0("raw_", c("ctapr", "mdapr", "q1apr", "q3apr", #"mnapr", "mnrat", "pctbw", "pcteq", "pctab")))
+
+#rawdata = rawdata %>% merge(varnms, ., by = "SERIES") %>% select(-SERIES)
+
+## Divide into separate tables
+#list2env(split(rawdata, rawdata$varnm), envir = .GlobalEnv)
+
+## Take 5-year average of each variable
+## (NOTE - This unfortunately did not work in a for loop, so each must be run individually, as seen below)
+#raw_ctapr = raw_ctapr %>% select(-varnm) %>%
+#  group_by(GEOID) %>%
+#  summarise(ctapr = mean(VALUE, na.rm = T)) %>%
+#  mutate_at(vars(ctapr), ~ifelse(is.nan(.), NA, .))
+#raw_mdapr = raw_mdapr %>% select(-varnm) %>%
+#  group_by(GEOID) %>%
+#  summarise(mdapr = mean(VALUE, na.rm = T)) %>%
+#  mutate_at(vars(mdapr), ~ifelse(is.nan(.), NA, .))
+#raw_q1apr = raw_q1apr %>% select(-varnm) %>%
+#  group_by(GEOID) %>%
+#  summarise(q1apr = mean(VALUE, na.rm = T)) %>%
+#  mutate_at(vars(q1apr), ~ifelse(is.nan(.), NA, .))
+#raw_q3apr = raw_q3apr %>% select(-varnm) %>%
+#  group_by(GEOID) %>%
+#  summarise(q3apr = mean(VALUE, na.rm = T)) %>%
+#  mutate_at(vars(q3apr), ~ifelse(is.nan(.), NA, .))
+#raw_mnapr = raw_mnapr %>% select(-varnm) %>%
+#  group_by(GEOID) %>%
+#  summarise(mnapr = mean(VALUE, na.rm = T)) %>%
+#  mutate_at(vars(mnapr), ~ifelse(is.nan(.), NA, .))
+#raw_mnrat = raw_mnrat %>% select(-varnm) %>%
+#  group_by(GEOID) %>%
+#  summarise(mnrat = mean(VALUE, na.rm = T)) %>%
+#  mutate_at(vars(mnrat), ~ifelse(is.nan(.), NA, .))
+#raw_pctbw = raw_pctbw %>% select(-varnm) %>%
+#  group_by(GEOID) %>%
+#  summarise(pctbw = mean(VALUE, na.rm = T)) %>%
+#  mutate_at(vars(pctbw), ~ifelse(is.nan(.), NA, .))
+#raw_pcteq = raw_pcteq %>% select(-varnm) %>%
+#  group_by(GEOID) %>%
+#  summarise(pcteq = mean(VALUE, na.rm = T)) %>%
+#  mutate_at(vars(pcteq), ~ifelse(is.nan(.), NA, .))
+#raw_pctab = raw_pctab %>% select(-varnm) %>%
+#  group_by(GEOID) %>%
+#  summarise(pctab = mean(VALUE, na.rm = T)) %>%
+#  mutate_at(vars(pctab), ~ifelse(is.nan(.), NA, .))
+
+## Merge all nine tables back together
+#table_list = list(raw_ctapr, raw_mdapr, raw_q1apr, raw_q3apr, raw_mnapr, raw_mnrat, raw_pctbw, raw_pcteq, raw_pctab)
+#cleandata = reduce(table_list, full_join, by="GEOID")
+
+## Export as a .csv
+#write.csv(cleandata, "FHFA_UAD_tract/FHFA_UAD_tract_filtered.csv")
+```
+
+The following code chunk simply opens up the file created above, removes an unnecessary index variable, and converts the `GEOID` variable (census tract code) to string format to allow for merging with census data later on.
+
+```{r 1.1}
+# Load cleaned CSV created above and remove the index variable
+fhfa_uad_trct = read.csv("FHFA_UAD_tract/FHFA_UAD_tract_filtered.csv") %>%
+  select(-X)
+
+# Change GEOID to character data type in order to allow for merging later on
+class(fhfa_uad_trct$GEOID) = "character"
+```
+
+#### 2020 census data
+
+2020 census data on population and race are downloaded directly from the census bureau using the [**tidycensus**](https://cran.r-project.org/web/packages/tidycensus/index.html) R package. Variables fro the 2020 Decennial Census are **total population** (`P1_001N`), **total non-Hispanic/Latino white population** (`P2_005N`), **total Hispanic/Latino population** (`P2_002N`), and **total non-Hispanic/Latino Black population** (`P2_006N`). One final variable, **median income** (`B19326_001`), is taken from a 5-year average of the American Community Survey from 2017-2021 (inclusive).
+
+```{r 2, results='hide'}
+# Load decennial variables
+il_trct_dec = get_decennial(
+  geography = "tract",
+  variables = c(popul = "P1_001N", white = "P2_005N", hispa = "P2_002N", black = "P2_006N"),
+  state = "IL",
+  year = 2020,
+  geometry = T,
+  output = "wide"
+) %>%
+  filter(!st_is_empty(geometry)) # REMOVE EMPTY TRACTS!
+
+# Load ACS variable
+il_trct_acs = get_acs(
+  geography = "tract",
+  variables = c(mdinc = "B19326_001"),
+  state = "IL",
+  year = 2021,
+  survey = "acs5",
+  geometry = T,
+  output = "wide"
+) %>%
+  filter(!st_is_empty(geometry)) %>% # REMOVE EMPTY TRACTS!
+  st_drop_geometry() %>% # REMOVE GEOMETRY (ALREADY PROVIDED FROM DECENNIAL VARIABLES)
+  select(GEOID, mdinc = mdincE) # REMOVE OTHER UNNECESSARY VARIABLES
+```
+
+### Transforming data
+
+First, the census tables and appraisal data are merged.
+
+```{r 3}
+# Merge tables
+il_trct = full_join(il_trct_dec, il_trct_acs, by = "GEOID") %>%
+  full_join(fhfa_uad_trct, by = "GEOID")
+```
+
+Next, a new variable is created to calculate the mean difference between contract price and appraisal price in USD for each census tract. This will show the monetary loss or gain faced by the average homebuyer from the appraisal process in that census tract.
+
+```{r 3.1}
+il_trct$mndif = il_trct$mnapr-(il_trct$mnapr*il_trct$mnrat)
+```
+
+Next, each race variable is converted to a percent of the total tract population, then all percentage variables are multiplied by 100 (this is needed in order to visualize the values as a percentage later on).
+
+```{r 4}
+# Calculate percentages, then multiply these values and pctbw by 100
+il_trct = il_trct %>% mutate_at(vars(c(white, hispa, black)), ~ (./popul)) %>%
+  mutate_at(vars(c(white, hispa, black, pctbw, pcteq, pctab)), ~ (.*100))
+```
+
+To clean up, non-integer values are rounded and variables are relocated in a more sensible order.
+
+```{r 5}
+# Round non-integer values
+il_trct$white = round(il_trct$white, digits = 1)
+il_trct$hispa = round(il_trct$hispa, digits = 1)
+il_trct$black = round(il_trct$black, digits = 1)
+il_trct$ctapr = round(il_trct$ctapr, digits = 1)
+il_trct$mdapr = round(il_trct$mdapr, digits = 0)
+il_trct$q1apr = round(il_trct$q1apr, digits = 0)
+il_trct$q3apr = round(il_trct$q3apr, digits = 0)
+il_trct$mnapr = round(il_trct$mnapr, digits = 0)
+il_trct$mnrat = round(il_trct$mnrat, digits = 3)
+il_trct$pctbw = round(il_trct$pctbw, digits = 1)
+il_trct$pcteq = round(il_trct$pcteq, digits = 1)
+il_trct$pctab = round(il_trct$pctab, digits = 1)
+il_trct$mndif = round(il_trct$mndif, digits = 0)
+
+# Rearrange variables
+il_trct = il_trct %>%
+  relocate(geometry, .after = mndif)
+```
+
+Finally, alternate versions of this table are created, the first with no `NA` values, and the second with no `NA` and only positive values that is converted to logarithmic format (the mean difference variable is dropped, as it is frequently negative). The first will allow for better map visualizations, while the second will allow for linear regressions with logarithmic transformation.
+
+```{r 6}
+# No NA values
+il_trct_noNA = na.omit(il_trct)
+
+# No NA or 0 values - logarithmic transformation (mndif variable dropped)
+il_trct_log = il_trct_noNA %>% select(-mndif) %>%
+  filter(popul > 0 & white > 0 & hispa > 0 & black > 0 & pctbw > 0 & pcteq > 0 & pctab > 0) %>%
+  mutate_at(vars(white, hispa, black, mdinc, ctapr, mdapr, q1apr, q3apr, mnapr, mnrat, pctbw, pcteq, pctab), ~ log(.))
+```
+
+### Mapping data
+
+In order to create interactive maps, package [**tmap**](https://cran.r-project.org/web/packages/tmap/index.html) is set to interactive viewing mode and labels with percentage and dollar symbols are created.
+
+```{r 7}
+# Set tmap to interactive viewing
+tmap_mode("view")
+
+# Create "%" and "$" string variables for labeling
+il_trct_noNA = il_trct_noNA %>%
+  mutate(white_pct = paste0(sprintf("%.1f", white), "%")) %>%
+  mutate(hispa_pct = paste0(sprintf("%.1f", hispa), "%")) %>%
+  mutate(black_pct = paste0(sprintf("%.1f", black), "%")) %>%
+  mutate(mdinc_usd = paste0("$", as.character(format(mdinc, big.mark = ",", trim = T)))) %>%
+  mutate(pctbw_pct = paste0(sprintf("%.1f", pctbw), "%")) %>%
+  mutate(pctab_pct = paste0(sprintf("%.1f", pctab), "%")) %>%
+  mutate(mndif_usd = paste0("$", as.character(format(mndif, big.mark = ",", trim = T))))
+```
+
+Next, the maps are defined as an object, using data from the "no NA" version of the data table. This object is then converted to a [**leaflet**](https://cran.r-project.org/web/packages/leaflet/index.html) map in order to change a few settings.
+
+```{r 8}
+# Create popup label object
+popup = c("2020 Population" = "popul", "2020 Percent Non-Hispanic/Latino White" = "white_pct", "2020 Percent Non-Hispanic/Latino Black" = "black_pct", "2020 Percent Hispanic/Latino" = "hispa_pct", "2017-2021 Median Income" = "mdinc_usd", "2018-2022 Annual Count of Appraisals" = "ctapr", "2018-2022 Percent of Appraisals Below Contract Price" = "pctbw_pct", "2018-2022 Percent of Appraisals Above Contract Price" = "pctab_pct", "2018-2022 Mean Appraisal Loss/Gain" = "mndif_usd")
+
+# Create map object
+map = tm_shape(il_trct_noNA, name = "2020 Population by<br>Census Tract") +
+  tm_polygons(title = "2020 Population by<br>Census Tract", col = "popul", style = "jenks", palette = "Greys", alpha = 0.5, border.alpha = 0.1, id = "NAME", popup.format = c(html.escape = F), popup.vars = popup) +
+  tm_shape(il_trct_noNA, name = "2020 Percent Non-<br>Hispanic/Latino White") +
+  tm_polygons(title = "2020 Percent Non-<br>Hispanic/Latino White", col = "white", style = "jenks", palette = "Reds", alpha = 0.5, border.alpha = 0.1, id = "NAME", popup.format = c(html.escape = F), popup.vars = popup, legend.format = list(fun = function(x) paste0(x, "%"))) +
+  tm_shape(il_trct_noNA, name = "2020 Percent Non-<br>Hispanic/Latino Black") +
+  tm_polygons(title = "2020 Percent Non-<br>Hispanic/Latino Black", col = "black", style = "jenks", palette = "Oranges", alpha = 0.5, border.alpha = 0.1, id = "NAME", popup.format = c(html.escape = F), popup.vars = popup, legend.format = list(fun = function(x) paste0(x, "%"))) +
+  tm_shape(il_trct_noNA, name = "2020 Percent<br>Hispanic/Latino") +
+  tm_polygons(title = "2020 Percent<br>Hispanic/Latino", col = "hispa", style = "jenks", palette = "YlOrBr", alpha = 0.5, border.alpha = 0.1, id = "NAME", popup.format = c(html.escape = F), popup.vars = popup, legend.format = list(fun = function(x) paste0(x, "%"))) +
+  tm_shape(il_trct_noNA, name = "2017-2021 Median<br>Income") +
+  tm_polygons(title = "2017-2021 Median<br>Income", col = "mdinc", style = "jenks", palette = "Greens", alpha = 0.5, border.alpha = 0.1, id = "NAME", popup.format = c(html.escape = F), popup.vars = popup, legend.format = list(fun = function(x) paste0("$", x))) +
+  tm_shape(il_trct_noNA, name = "2018-2022 Annual<br>Count of Appraisals") +
+  tm_polygons(title = "2018-2022 Annual<br>Count of Appraisals", col = "ctapr", style = "jenks", palette = "Greys", alpha = 0.5, border.alpha = 0.1, id = "NAME", popup.format = c(html.escape = F), popup.vars = popup) +
+  tm_shape(il_trct_noNA, name = "2018-2022 Percent of<br>Appraisals Below<br>Contract Price") +
+  tm_polygons(title = "2018-2022 Percent of<br>Appraisals Below<br>Contract Price", col = "pctbw", style = "jenks", palette = "Blues", alpha = 0.5, border.alpha = 0.1, id = "NAME", popup.format = c(html.escape = F), popup.vars = popup, legend.format = list(fun = function(x) paste0(x, "%"))) +
+  tm_shape(il_trct_noNA, name = "2018-2022 Percent of<br>Appraisals Above<br>Contract Price") +
+  tm_polygons(title = "2018-2022 Percent of<br>Appraisals Above<br>Contract Price", col = "pctab", style = "jenks", palette = "Purples", alpha = 0.5, border.alpha = 0.1, id = "NAME", popup.format = c(html.escape = F), popup.vars = popup, legend.format = list(fun = function(x) paste0(x, "%"))) +
+  tm_shape(il_trct_noNA, name = "2018-2022 Mean<br>Appraisal Loss/Gain") +
+  tm_polygons(title = "2018-2022 Mean<br>Appraisal Loss/Gain", col = "mndif", midpoint = 0, breaks = c(-1000000, -100000, -10000, -1000, 0, 1000, 10000, 100000, 1000000), palette = "RdYlBu", alpha = 0.5, border.alpha = 0.1, id = "NAME", popup.format = c(html.escape = F), popup.vars = popup, legend.format = list(fun = function(x) paste0("$", x)))
+
+# Convert to leaflet
+map_leaflet = tmap_leaflet(map)
+
+# Make layers overlay and deselect all layers but one by default
+map_leaflet1 = map_leaflet %>% addLayersControl(overlayGroups = c("2020 Population by<br>Census Tract", "2020 Percent Non-<br>Hispanic/Latino White", "2020 Percent Non-<br>Hispanic/Latino Black", "2020 Percent<br>Hispanic/Latino", "2017-2021 Median<br>Income", "2018-2022 Annual<br>Count of Appraisals", "2018-2022 Percent of<br>Appraisals Below<br>Contract Price", "2018-2022 Percent of<br>Appraisals Above<br>Contract Price", "2018-2022 Mean<br>Appraisal Loss/Gain")) %>%
+  hideGroup(c("2020 Population by<br>Census Tract", "2020 Percent Non-<br>Hispanic/Latino White", "2020 Percent Non-<br>Hispanic/Latino Black", "2020 Percent<br>Hispanic/Latino", "2017-2021 Median<br>Income", "2018-2022 Annual<br>Count of Appraisals", "2018-2022 Percent of<br>Appraisals Above<br>Contract Price", "2018-2022 Mean<br>Appraisal Loss/Gain"))
+```
+
+</details>
+:::
+<br>
+
+<span style="color:#0b5394">**Use the map below to explore how demographic factors such as race and income are associated with appraisal values.**</span>
+
+Hover over the layers menu on the right side of the map and use the check boxes within to select one or more data layers to view. You can also click on an individual tract to get more information about it.
+
+```{r 9, echo=FALSE}
+map_leaflet1
+```
+
+<br>
+
+<span style="color:#0b5394">**Explanation of variables:**</span>
+
+- **2020 Population:** [`popul`] The population of the census tract, as reported by the 2020 US Census
+- **2020 Percent Non-Hispanic/Latino White:** [`white`] The percentage of that population that is White and not Hispanic or Latino, as reported by the 2020 US Census
+- **2020 Percent Non-Hispanic/Latino Black:** [`black`] The percentage of that population that is Black and not Hispanic or Latino, as reported by the 2020 US Census
+- **2020 Percent Hispanic/Latino:** [`hispa`] The percentage of that population that is Hispanic or Latino, as reported by the 2020 US Census
+- **2017-2021 Median Income:** [`mdinc`] The median income of the census tract, averaged over 2017 to 2021, as reported by the American Community Survey
+- **2018-2022 Annual Count of Appraisals:** [`ctapr`] The count of appraisals for home purchases in the census tract, averaged over 2018-2022, as reported in the Federal Housing Finance Agency (FHFA) Uniform Appraisal Dataset (UAD)
+- **2018-2022 Percent of Appraisals Below Contract Price:** [`pctbw`] The percentage of those appraisals that value a given home below its contract price, an unfavorable outcome for a homebuyer, as reported in the FHFA UAD
+- **2018-2022 Percent of Appraisals Above Contract Price:** [`pctab`] The percentage of those appraisals that value a given home above its contract price, a favorable outcome for a homebuyer, as reported in the FHFA UAD
+- **2018-2022 Mean Appraisal Loss/Gain:** [`mndif`] The average difference between the appraised value and contract price of a given home in the census tract, based on several variables reported in the FHFA UAD; a negative value indicates a financial loss for a homebuyer, while a positive value indicates a financial gain
+
+<span style="color:#0b5394">**Other variables not mapped:**</span>
+
+- **2018-2022 Median Appraisal Value:** [`mdapr`] The median value of appraisals in the tract, as reported in the FHFA UAD
+- **2018-2022 1st Quartile Appraisal Value:** [`q1apr`] The 1st quartile value of appraisals in the tract, as reported in the FHFA UAD
+- **2018-2022 3rd Quartile Appraisal Value:** [`q1apr`] The 3rd quartile value of appraisals in the tract, as reported in the FHFA UAD
+- **2018-2022 Mean Appraisal Value:** [`mnapr`] The mean value of appraisals in the tract, as reported in the FHFA UAD (used to calculate **2018-2022 Mean Appraisal Loss/Gain**)
+- **2018-2022 Mean Contract Price/Appraisal Ratio:** [`mnrat`] The mean ratio between the contract price and appraised value of a given house in the tract, as reported in the FHFA UAD (used to calculate **2018-2022 Mean Appraisal Loss/Gain**)
+- **2018-2022 Percent of Appraisals Equal to Contract Price:** [`pcteq`] The percentage of appraisals in the tract that value a given home equal to its contract price, a neutral outcome for a homebuyer, as reported in the FHFA UAD
+
+<br>
+
+---
+
+### Table
+
+::: bordered
+<details>
+
+<summary style="color:#0b5394;font-weight:bold">Click here to show the data table for the above map</summary>
+
+```{r 9.1, echo=FALSE}
+kbl(il_trct) %>% kable_paper() %>% scroll_box(width = "100%", height = "400px")
+```
+
+</details>
+:::
+
+<br>
+
+---
+
+### Regressions
+
+::: bordered
+<details>
+
+<summary style="color:#0b5394;font-weight:bold">Click here to show regressions of the data</summary>
+
+#### Regressions
+
+Two correlograms are created with the package [**GGally**](https://cran.r-project.org/web/packages/GGally/index.html), one with linear data (`il_trct_noNA`) and one with logarithmic data (`il_trct_log`)
+
+```{r 10, results='hide', message=FALSE}
+il_trct_noNA_correlogram = il_trct_noNA %>% select(white, hispa, black, mdinc, ctapr, pctbw, pctab, mndif) %>% st_drop_geometry() %>% ggpairs(title="Correlogram of all variables", lower = list(continuous = wrap("smooth_loess", alpha = 0.2, size = 0.05, color = "blue")))
+
+il_trct_log_correlogram = il_trct_log %>% select(white, hispa, black, mdinc, ctapr, pctbw, pctab) %>% st_drop_geometry() %>% ggpairs(title="Correlogram of all variables with logarithmic transformation", lower = list(continuous = wrap("smooth_loess", alpha = 0.2, size = 0.05, color = "blue")))
+```
+
+The two correlograms are visualized below:
+
+```{r 11, echo=FALSE}
+il_trct_noNA_correlogram
+il_trct_log_correlogram
+```
+
+</details>
+:::
+
+<br>
+
+---
+
+<img src="NHS-logo.png" alt = "NHS Logo" width="200">
+
+<div style="color: #666666; line-height: 1.1">
+For more information contact:
+
+-   Falon Young, Neighborhood Housing Services of Chicago, at 773-329-4207 or [fyoung\@nhschicago.org](mailto:fyoung@nhschicago.org){.email}
+
+-   Jada Potter, Neighborhood Housing Services of Chicago, at [j.potter\@nhschicago.org](j.potter\@nhschicago.org){.email}
+</div>
